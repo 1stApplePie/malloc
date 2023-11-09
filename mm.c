@@ -235,33 +235,22 @@ void *mm_realloc(void *ptr, size_t size)
     void *newptr;
     size_t copySize;
     
+    // dynamic alloc & check it returns NULL
     newptr = mm_malloc(size);
     if (newptr == NULL)
       return NULL;
-    copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-    if (size < copySize)
-      copySize = size;
+
+    // copySize = sizeof(*(size_t *)((char *)oldptr - SIZE_T_SIZE));
+    // if (size < copySize)
+    //   return copySize = size;
+
+    // test ver1: 27, 45
+    // copySize = sizeof(oldptr);
+
+    // test ver2: 27, 45
+    copySize = size;
+
     memcpy(newptr, oldptr, copySize);
     mm_free(oldptr);
     return newptr;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
