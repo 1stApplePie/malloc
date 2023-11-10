@@ -8,6 +8,11 @@
  *
  * NOTE TO STUDENTS: Replace this header comment with your own header
  * comment that gives a high level description of your solution. 
+ *  -------------------------------------------------------------
+	|        |          |          |                    |         |
+    | HEADER | PREV_PTR | NEXT_PTR |                    |  FOOTER |                            
+    |        |          |          |                    |         |
+    -------------------------------------------------------------
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -56,6 +61,8 @@ team_t team = {
 // Given block ptr block_pt, compute address of its header and footer
 #define HDRP(block_pt) ((char *)(block_pt) - WSIZE) // header pointer = block_pt - header size(wsize)
 #define FTRP(block_pt) ((char *)(block_pt) + GET_SIZE(HDRP(block_pt)) - DSIZE)    // footer pointer = block_pt + block_pt size - dsize
+#define PREP(block_pt) ((char *)(block_pt))                 // Get prev free block addr
+#define SUCP(block_pt) ((char *)(block_pt) + 1*WSIZE)       // Get succ free block addr
 
 // Given block ptr block_pt, compute address of next and previous blocks
 #define NEXT_BLKP(block_pt) ((char *)(block_pt) + GET_SIZE((char *)(block_pt) - WSIZE))   // next block pointer = block_pt + size of block_pt - wsize
