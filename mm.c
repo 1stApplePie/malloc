@@ -35,14 +35,10 @@ team_t team = {
     ""
 };
 
-/* single word (4) or double word (8) alignment */
-#define ALIGNMENT 8
-
-/* rounds up to the nearest multiple of ALIGNMENT */
-#define ALIGN(size) (((size) + (ALIGNMENT-1)) & ~0x7)
-
-
-#define SIZE_T_SIZE (ALIGN(sizeof(size_t)))
+// define search mode
+// #define FIRSTFIT
+ #define NEXTFIT
+// #define BESTFIT
 
 // Basic constants and macros
 #define WSIZE       4       // Word and header / footer size (bytes)
@@ -67,8 +63,8 @@ team_t team = {
 #define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)    // footer pointer = bp + bp size - dsize
 
 // Given block ptr bp, compute address of next and previous blocks
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)))   // next block pointer = bp + size of bp
-#define PREV_BLKP(bp) ((char *)(bp)) - GET_SIZE((char *)(bp) - DSIZE)    // previous block pointer = (bp - wsize) - previous block size(information in footer) + wsize 
+#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE((char *)(bp) - WSIZE))   // next block pointer = bp + size of bp - wsize
+#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE((char *)(bp) - DSIZE))   // previous block pointer = (bp - wsize) - previous block size(information in footer) + wsize 
 
 /* Private local function Declaration */
 static void *coalesce(void *);
@@ -76,16 +72,25 @@ static void *extend_heap(size_t);
 static void *find_fit(size_t);
 static void place(void *, size_t);
 
-/* Private local variables */
+/* Private local variable Declaration*/
 char *heap_pt;
+char *last_bp;
 
 /* Function Definition */
+/* 
+ * coalesce - Free block coalescing for efficient memory management.
+ */
 static void *coalesce(void *bp) {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
     size_t size = GET_SIZE(HDRP(bp));
 
     if (prev_alloc && next_alloc) {         // case 1
+
+        #ifdef NEXTFIT
+        last_bp = bp;
+        #endif
+        
         return bp;
     }
 
@@ -109,9 +114,17 @@ static void *coalesce(void *bp) {
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
         bp = PREV_BLKP(bp);
     }
+
+    #ifdef NEXTFIT
+    last_bp = bp;
+    #endif
+    
     return bp;
 }
 
+/* 
+ * extend_heap - Extend the heap by allocating a new free block.
+ */
 static void *extend_heap(size_t words) {
     char *bp;
     size_t size;
@@ -130,17 +143,55 @@ static void *extend_heap(size_t words) {
     return coalesce(bp);
 }
 
+/* 
+ * find_fit - Function to search for a memory block to be used for memory allocation
+ */
 static void *find_fit(size_t asize) {
+    char *bp;
     // First-fit search
-    void *bp;
+    #ifdef FIRSTFIT
+    // // Search for blocks after heap_pt
     for (bp = heap_pt; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
             return bp;
         }
     }
+    #endif
+
+    // Next-fit search
+    #ifdef NEXTFIT
+    if (last_bp == NULL) {
+        last_bp = NEXT_BLKP(heap_pt);
+    }
+    
+    // Search for blocks after last_bp
+    for (bp = last_bp;  GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_bp = bp;
+            return bp;
+        }
+    }
+
+    // Search for blocks before last_bp
+    for (bp = NEXT_BLKP(heap_pt); bp < last_bp; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            last_bp = bp;
+            return bp;
+        }
+    }
+
+    #endif
+
+    // Best-fit search
+    #ifdef BESTFIT
+
+    #endif
     return NULL;    // No fit
 }
 
+/* 
+ * place - Place the allocated block within a free block, splitting it if necessary.
+ */
 static void place(void * bp, size_t asize) {
     size_t csize = GET_SIZE(HDRP(bp));
 
@@ -177,6 +228,10 @@ int mm_init(void)
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
 
+    #ifdef NEXTFIT
+    last_bp = heap_pt;
+    #endif
+
     return 0;
 }
 
@@ -203,6 +258,11 @@ void *mm_malloc(size_t size)
     // Search the free list for a fit
     if ((bp = find_fit(asize)) != NULL) {
         place(bp, asize);
+
+        #ifdef NEXTFIT
+        last_bp = bp;
+        #endif
+
         return bp;
     }
 
@@ -211,6 +271,11 @@ void *mm_malloc(size_t size)
     if ((bp = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;
     place(bp, asize);
+
+    #ifdef NEXTFIT
+    last_bp = bp;
+    #endif
+
     return bp;
 }
 
@@ -231,26 +296,43 @@ void mm_free(void *ptr)
  */
 void *mm_realloc(void *ptr, size_t size)
 {
-    void *oldptr = ptr;
-    void *newptr;
-    size_t copySize;
+    void *old_ptr = ptr;
+    void *new_ptr;
     
+    #ifdef FIRSTFIT
     // dynamic alloc & check it returns NULL
-    newptr = mm_malloc(size);
-    if (newptr == NULL)
+    new_ptr = mm_malloc(size);
+    if (new_ptr == NULL)
       return NULL;
 
-    // copySize = sizeof(*(size_t *)((char *)oldptr - SIZE_T_SIZE));
-    // if (size < copySize)
-    //   return copySize = size;
+    // size_t old_size = sizeof(*(size_t *)((char *)old_ptr - SIZE_T_SIZE));
+    // if (size < old_size)
+    //   return old_size = size;
 
     // test ver1: 27, 45
-    // copySize = sizeof(oldptr);
+    // old_size = sizeof(old_ptr);
 
     // test ver2: 27, 45
-    copySize = size;
+    new_size = size;
+    #endif
 
-    memcpy(newptr, oldptr, copySize);
-    mm_free(oldptr);
-    return newptr;
+    // 현재 블록과 다음 블록의 크기를 계산하여 현재 블록을 연장하는 코드는 디버깅중...
+    #ifdef NEXTFIT
+    size_t old_size = GET_SIZE(HDRP(old_ptr));
+    size_t new_size = size + (2*WSIZE);    // Add header, footer byte
+      
+    if (new_size <= old_size) {
+        return old_ptr;
+    }
+
+    else {
+        new_ptr = mm_malloc(new_size);
+        if (new_ptr == NULL) 
+            return NULL;
+        place(new_ptr, new_size);
+    }
+    #endif
+    memcpy(new_ptr, old_ptr, new_size);
+    mm_free(ptr);
+    return new_ptr;
 }
