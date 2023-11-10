@@ -37,8 +37,8 @@ team_t team = {
 
 // define search mode
 // #define FIRSTFIT
- #define NEXTFIT
-// #define BESTFIT
+// #define NEXTFIT
+ #define BESTFIT
 
 // Basic constants and macros
 #define WSIZE       4       // Word and header / footer size (bytes)
@@ -73,8 +73,8 @@ static void *find_fit(size_t);
 static void place(void *, size_t);
 
 /* Private local variable Declaration*/
-char *heap_pt;
-char *last_bp;
+static char *heap_pt;
+static char *last_bp;
 
 /* Function Definition */
 /* 
@@ -150,7 +150,7 @@ static void *find_fit(size_t asize) {
     char *bp;
     // First-fit search
     #ifdef FIRSTFIT
-    // // Search for blocks after heap_pt
+    // Search for blocks after heap_pt
     for (bp = heap_pt; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
         if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
             return bp;
@@ -184,8 +184,25 @@ static void *find_fit(size_t asize) {
 
     // Best-fit search
     #ifdef BESTFIT
-
+    // Declaration for storing minimum size block address, size
+    void *min_block_pt = NULL;
+    size_t min_block_size;
+    // Search for blocks after heap_pt
+    for (bp = heap_pt; GET_SIZE(HDRP(bp)) > 0; bp = NEXT_BLKP(bp)) {
+        if (!GET_ALLOC(HDRP(bp)) && (asize <= GET_SIZE(HDRP(bp)))) {
+            if (min_block_pt == NULL) {
+                min_block_pt = bp;
+                min_block_size = GET_SIZE(HDRP(bp));
+            }
+            else if (min_block_size > GET_SIZE(HDRP(bp))) {
+                    min_block_size = GET_SIZE(HDRP(bp));
+                    min_block_pt = bp;
+            }
+        }
+    }
+    return min_block_pt;
     #endif
+    
     return NULL;    // No fit
 }
 
@@ -332,6 +349,23 @@ void *mm_realloc(void *ptr, size_t size)
         place(new_ptr, new_size);
     }
     #endif
+
+    #ifdef BESTFIT
+    size_t old_size = GET_SIZE(HDRP(old_ptr));
+    size_t new_size = size + (2*WSIZE);    // Add header, footer byte
+      
+    if (new_size <= old_size) {
+        return old_ptr;
+    }
+
+    else {
+        new_ptr = mm_malloc(new_size);
+        if (new_ptr == NULL) 
+            return NULL;
+        place(new_ptr, new_size);
+    }
+    #endif
+
     memcpy(new_ptr, old_ptr, new_size);
     mm_free(ptr);
     return new_ptr;
