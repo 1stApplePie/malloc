@@ -20,7 +20,7 @@
 #include <unistd.h>
 #include <string.h>
 
-#include "mm.h"
+#include "mm_explicit_free_list.h"
 #include "memlib.h"
 
 /*********************************************************
@@ -43,7 +43,7 @@ team_t team = {
 // Basic constants and macros
 #define WSIZE       4       // Word and header / footer size (bytes)
 #define DSIZE       8       // Double word size (bytes)
-#define CHUNKSIZE   1 << 12 // Extemd heap by this amount (bytes)
+#define CHUNKSIZE   1 << 9 // Extend heap by this amount (bytes), 12 - 3(prologue pre, suc, footer)
 
 #define MAX(x, y) ((x) > (y)) ? (x) : (y)
 
@@ -75,8 +75,7 @@ static void *find_fit(size_t);
 static void place(void *, size_t);
 
 /* Private local variable Declaration*/
-static char *heap_pt;
-static char *last_block_pt;
+static char *free_block_pt;
 
 /* Function Definition */
 /* 
@@ -92,24 +91,53 @@ static void *coalesce(void *block_pt) {
     }
 
     else if (prev_alloc && !next_alloc) {   // case 2
+        // Update header & footer
         size += GET_SIZE(HDRP(NEXT_BLKP(block_pt)));
         PUT(HDRP(block_pt), PACK(size, 0));
         PUT(FTRP(block_pt), PACK(size, 0));
+
+        // Update free block info
+        PUT(PREP(block_pt), free_block_pt);
+        PUT(SUCP(free_block_pt), block_pt);
+        free_block_pt = block_pt;
     }
 
     else if (!prev_alloc && next_alloc) {   // case 3
+        // Update header & footer
         size += GET_SIZE(HDRP(PREV_BLKP(block_pt)));
         PUT(FTRP(block_pt), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(block_pt)), PACK(size, 0));
+
+        // Update free block info
+        PUT(PREP(PREV_BLKP(block_pt)), free_block_pt);
+        PUT(SUCP(free_block_pt), PREV_BLKP(block_pt));
+
         block_pt = PREV_BLKP(block_pt);
+        free_block_pt = block_pt;
     }
 
     else {                                  // case 4
+        // Update header & footer
         size += GET_SIZE(HDRP(PREV_BLKP(block_pt))) +
         GET_SIZE(FTRP(NEXT_BLKP(block_pt)));
         PUT(HDRP(PREV_BLKP(block_pt)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(block_pt)), PACK(size, 0));
+
+        // Update free block info
+        // 1. predecessor block
+        PUT(PREP(PREV_BLKP(block_pt)), free_block_pt);
+        PUT(SUCP(free_block_pt), block_pt);
+
+        // 2. current block
+        PUT(PREP(block_pt), NULL);
+        PUT(SUCP(block_pt), NULL);
+
+        // 3. successor block
+        PUT(PREP(NEXT_BLKP(block_pt)), NULL);
+        PUT(SUCP(NEXT_BLKP(block_pt)), NULL);
+
         block_pt = PREV_BLKP(block_pt);
+        free_block_pt = block_pt;
     }
     
     return block_pt;
@@ -141,14 +169,12 @@ static void *extend_heap(size_t words) {
  */
 static void *find_fit(size_t asize) {
     char *block_pt;
-    // First-fit search
     // Search for blocks after heap_pt
-    for (block_pt = heap_pt; GET_SIZE(HDRP(block_pt)) > 0; block_pt = NEXT_BLKP(block_pt)) {
-        if (!GET_ALLOC(HDRP(block_pt)) && (asize <= GET_SIZE(HDRP(block_pt)))) {
+    for (block_pt = free_block_pt; PREP(block_pt) != NULL; block_pt = PREP(block_pt)) {
+        if (asize <= GET_SIZE(HDRP(block_pt))) {
             return block_pt;
         }
     }
-
     return NULL;    // No fit
 }
 
@@ -158,17 +184,25 @@ static void *find_fit(size_t asize) {
 static void place(void * block_pt, size_t asize) {
     size_t csize = GET_SIZE(HDRP(block_pt));
 
+    // Update predecessor & succesor
+    PUT(PREP(block_pt), free_block_pt);
+    PUT(SUCP(free_block_pt), block_pt);
+
     if ((csize - asize) >= (2*DSIZE)) {
+        // Update header & footer
         PUT(HDRP(block_pt), PACK(asize, 1));
         PUT(FTRP(block_pt), PACK(asize, 1));
+
         block_pt = NEXT_BLKP(block_pt);
         PUT(HDRP(block_pt), PACK(csize-asize, 0));
         PUT(FTRP(block_pt), PACK(csize-asize, 0));
     }
     else {
+        // Update header & footer
         PUT(HDRP(block_pt), PACK(csize, 1));
         PUT(FTRP(block_pt), PACK(csize, 1));
     }
+    free_block_pt = block_pt;
 }
 
 /* 
@@ -176,16 +210,18 @@ static void place(void * block_pt, size_t asize) {
  */
 int mm_init(void)
 {
+    char *heap_pt;
     // Create the initial emtpy heap
-    if ((heap_pt = mem_sbrk(4*WSIZE)) == (void *) - 1) 
+    if ((heap_pt = mem_sbrk(6*WSIZE)) == (void *) - 1) 
         return -1;
     
-    PUT(heap_pt, 0);                            // Alignment padding
-    PUT(heap_pt + (1*WSIZE), PACK(DSIZE, 1));   // Prologue header
-    PUT(heap_pt + (2*WSIZE), PACK(DSIZE, 1));   // Prologue footer
-    PUT(heap_pt + (3*WSIZE), PACK(0, 1));       // Epilogue header
-    
-    heap_pt += (2*WSIZE);
+    PUT(heap_pt, 0);                                    // Alignment padding
+    PUT(heap_pt + (1*WSIZE), PACK(DSIZE, 1));           // Prologue header
+    PUT(heap_pt + (2*WSIZE), NULL);                     // Prologue predecessor
+    PUT(heap_pt + (3*WSIZE), NULL);                     // Prologue successor
+    PUT(heap_pt + (4*WSIZE), PACK(DSIZE, 1));           // Prologue footer
+    PUT(heap_pt + (5*WSIZE), PACK(0, 1));               // Epilogue header
+    free_block_pt = heap_pt + (3*WSIZE);                // Put free block stack
 
     // Extend the empty heap with a free block of CHUNKSIZE bytes
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
@@ -217,16 +253,13 @@ void *mm_malloc(size_t size)
     // Search the free list for a fit
     if ((block_pt = find_fit(asize)) != NULL) {
         place(block_pt, asize);
-
         return block_pt;
     }
-
     // No fit found. Get more memory and place the block
     extendsize = MAX(asize, CHUNKSIZE);
     if ((block_pt = extend_heap(extendsize/WSIZE)) == NULL)
         return NULL;
     place(block_pt, asize);
-
     return block_pt;
 }
 
@@ -253,6 +286,7 @@ void *mm_realloc(void *ptr, size_t size)
     size_t new_size = size + (2*WSIZE);    // Add header, footer byte
       
     if (new_size <= old_size) {
+
         return old_ptr;
     }
 
@@ -260,6 +294,8 @@ void *mm_realloc(void *ptr, size_t size)
         new_ptr = mm_malloc(new_size);
         if (new_ptr == NULL) 
             return NULL;
+        PUT(PREP(old_ptr), NULL);
+        PUT(SUCP(old_ptr), NULL);
         place(new_ptr, new_size);
     }
 
