@@ -36,7 +36,7 @@ team_t team = {
 };
 
 /*********************************************************
- * select search mode
+ * Select search mode
  ********************************************************/
 // #define FIRSTFIT
 #define NEXTFIT
@@ -163,7 +163,7 @@ static void *find_fit(size_t asize) {
     // Next-fit search
     #ifdef NEXTFIT
     if (last_block_pt == NULL) {
-        last_block_pt = NEXT_BLKP(heap_pt);
+        last_block_pt = heap_pt;
     }
     
     // Search for blocks after last_block_pt
@@ -175,7 +175,7 @@ static void *find_fit(size_t asize) {
     }
 
     // Search for blocks before last_block_pt
-    for (block_pt = NEXT_BLKP(heap_pt); block_pt < last_block_pt; block_pt = NEXT_BLKP(block_pt)) {
+    for (block_pt = heap_pt; block_pt < last_block_pt; block_pt = NEXT_BLKP(block_pt)) {
         if (!GET_ALLOC(HDRP(block_pt)) && (asize <= GET_SIZE(HDRP(block_pt)))) {
             last_block_pt = block_pt;
             return block_pt;
@@ -328,7 +328,6 @@ void *mm_realloc(void *ptr, size_t size)
         new_ptr = mm_malloc(new_size);
         if (new_ptr == NULL) 
             return NULL;
-        place(new_ptr, new_size);
     }
 
     memcpy(new_ptr, old_ptr, new_size);
